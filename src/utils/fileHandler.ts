@@ -12,6 +12,7 @@ export function createEmptyCarteira(): CarteiraSchema {
       { id: 'c3', nome: 'Renda Fixa' },
       { id: 'c4', nome: 'FIIs' },
       { id: 'c5', nome: 'Criptomoedas' },
+      { id: 'c6', nome: 'Fundos de Investimento' },
     ],
     ativos: [],
     posicoes: [],
