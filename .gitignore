@@ -3,3 +3,6 @@ dist
 .env
 .env.local
 *.local
+
+# Dados financeiros pessoais — nunca versionar
+carteira_investimentos.json
