@@ -36,6 +36,9 @@ jobs:
 
       - name: Build
         run: npm run build
+        env:
+          VITE_FINNHUB_TOKEN: ${{ secrets.VITE_FINNHUB_TOKEN }}
+          VITE_BRAPI_TOKEN: ${{ secrets.VITE_BRAPI_TOKEN }}
 
       - name: Configure Pages
         uses: actions/configure-pages@v4
