@@ -2,11 +2,12 @@ import { useState, useMemo } from 'react';
 import { useCarteira } from '../../context/CarteiraContext';
 import {
   enrichPosicoes,
-  formatCurrency,
+  formatCurrencyByMercado,
   formatPercent,
   formatNumber,
 } from '../../utils/calculations';
 import { usePriceUpdater } from '../../hooks/usePriceUpdater';
+import type { ApiTokens } from '../../hooks/usePriceUpdater';
 import { Badge } from '../UI/Badge';
 import { Button } from '../UI/Button';
 import type { FiltrosTabela, PosicaoEnriquecida } from '../../types/schema';
@@ -14,11 +15,14 @@ import type { FiltrosTabela, PosicaoEnriquecida } from '../../types/schema';
 interface ManualPriceInputProps {
   current: number;
   onConfirm: (price: number) => void;
+  label?: string;
+  format?: (v: number) => string;
 }
 
-function ManualPriceInput({ current, onConfirm }: ManualPriceInputProps) {
+function ManualPriceInput({ current, onConfirm, label, format }: ManualPriceInputProps) {
   const [value, setValue] = useState(current.toFixed(2));
   const [editing, setEditing] = useState(false);
+  const display = format ?? ((v: number) => formatCurrencyByMercado(v));
 
   function handleConfirm() {
     const parsed = parseFloat(value.replace(',', '.'));
@@ -33,9 +37,9 @@ function ManualPriceInput({ current, onConfirm }: ManualPriceInputProps) {
       <button
         onClick={() => setEditing(true)}
         className="mono text-sm text-slate-200 hover:text-sky-400 underline decoration-dotted transition-colors"
-        title="Clique para editar o preço"
+        title={label ? `Clique para editar: ${label}` : 'Clique para editar o preço'}
       >
-        {formatCurrency(current)}
+        {display(current)}
       </button>
     );
   }
@@ -70,18 +74,25 @@ function ManualPriceInput({ current, onConfirm }: ManualPriceInputProps) {
   );
 }
 
-function TableRow({ row, brapiToken }: { row: PosicaoEnriquecida; brapiToken?: string }) {
+function TableRow({ row, tokens }: { row: PosicaoEnriquecida; tokens: ApiTokens }) {
   const { updatePosicao, removePosicao } = useCarteira();
   const { updatePrice, getStatus, getError } = usePriceUpdater();
   const status = getStatus(row.ativo.id);
   const error = getError(row.ativo.id);
   const isPositive = row.lucroAbsoluto >= 0;
+  const mercado = row.ativo.mercado ?? 'BR';
+  const fmt = (v: number) => formatCurrencyByMercado(v, mercado);
 
   return (
     <tr className="border-b border-slate-800/50 hover:bg-surface-2/30 transition-colors group">
       <td className="px-4 py-3">
         <div className="flex flex-col gap-0.5">
-          <span className="mono text-sm font-semibold text-slate-100">{row.ativo.ticker}</span>
+          <div className="flex items-center gap-1.5">
+            <span className="mono text-sm font-semibold text-slate-100">{row.ativo.ticker}</span>
+            {mercado === 'US' && (
+              <span className="text-xs text-slate-600 font-normal" title="Ativo americano — preço em USD">🇺🇸</span>
+            )}
+          </div>
           <span className="text-xs text-slate-500">{row.ativo.nome}</span>
         </div>
       </td>
@@ -89,16 +100,28 @@ function TableRow({ row, brapiToken }: { row: PosicaoEnriquecida; brapiToken?: s
         {row.classeAtivo && <Badge label={row.classeAtivo.nome} colorKey={row.classeAtivo.id} />}
       </td>
       <td className="px-4 py-3 text-sm text-slate-400">{row.corretora.nome}</td>
+
+      {/* Quantidade */}
       <td className="px-4 py-3 mono text-sm text-slate-200 text-right">
-        {formatNumber(row.posicao.quantidade, row.posicao.quantidade % 1 === 0 ? 0 : 4)}
+        {row.isValorMode
+          ? <span className="text-slate-600">—</span>
+          : formatNumber(row.posicao.quantidade, row.posicao.quantidade % 1 === 0 ? 0 : 4)}
       </td>
+
+      {/* Preço Médio */}
       <td className="px-4 py-3 mono text-sm text-slate-400 text-right">
-        {formatCurrency(row.posicao.preco_medio)}
+        {row.isValorMode
+          ? <span className="text-slate-600">—</span>
+          : fmt(row.posicao.preco_medio)}
       </td>
+
+      {/* Preço Atual / Valor da Posição */}
       <td className="px-4 py-3 text-right">
-        {row.ativo.atualizacao === 'manual' ? (
+        {row.isValorMode || row.ativo.atualizacao === 'manual' ? (
           <ManualPriceInput
             current={row.posicao.preco_atual_cache}
+            label={row.isValorMode ? 'Valor' : undefined}
+            format={fmt}
             onConfirm={(preco) =>
               updatePosicao(row.ativo.id, row.corretora.id, { preco_atual_cache: preco })
             }
@@ -106,38 +129,51 @@ function TableRow({ row, brapiToken }: { row: PosicaoEnriquecida; brapiToken?: s
         ) : (
           <div className="flex flex-col items-end gap-0.5">
             <span className="mono text-sm text-slate-200">
-              {formatCurrency(row.posicao.preco_atual_cache)}
+              {fmt(row.posicao.preco_atual_cache)}
             </span>
             {error && status === 'error' && (
-              <span className="text-xs text-rose-400" title={error}>
-                Erro ao atualizar
-              </span>
+              <span className="text-xs text-rose-400" title={error}>Erro ao atualizar</span>
             )}
           </div>
         )}
       </td>
+
+      {/* Total */}
       <td className="px-4 py-3 mono text-sm font-semibold text-slate-100 text-right">
-        {formatCurrency(row.valorTotal)}
+        {fmt(row.valorTotal)}
       </td>
+
+      {/* L/P */}
       <td className="px-4 py-3 text-right">
-        <div className="flex flex-col items-end gap-0.5">
-          <span className={`mono text-sm font-medium ${isPositive ? 'positive' : 'negative'}`}>
-            {formatCurrency(row.lucroAbsoluto)}
-          </span>
-          <span className={`text-xs ${isPositive ? 'positive' : 'negative'}`}>
-            {formatPercent(row.lucroPct)}
-          </span>
-        </div>
+        {row.isValorMode ? (
+          <span className="text-slate-600 text-sm">—</span>
+        ) : (
+          <div className="flex flex-col items-end gap-0.5">
+            <span className={`mono text-sm font-medium ${isPositive ? 'positive' : 'negative'}`}>
+              {fmt(row.lucroAbsoluto)}
+            </span>
+            <span className={`text-xs ${isPositive ? 'positive' : 'negative'}`}>
+              {formatPercent(row.lucroPct)}
+            </span>
+          </div>
+        )}
       </td>
+
       <td className="px-4 py-3">
         <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-          {row.ativo.atualizacao === 'automatica' && (
+          {!row.isValorMode && row.ativo.atualizacao === 'automatica' && (
             <Button
               size="sm"
               variant="ghost"
               loading={status === 'loading'}
-              onClick={() => updatePrice(row.ativo.id, row.ativo.ticker, brapiToken)}
-              title="Buscar preço atual via BRAPI"
+              onClick={() => updatePrice(row.ativo.id, row.ativo.ticker, mercado, tokens)}
+              title={
+                mercado === 'US'
+                  ? tokens.finnhub
+                    ? 'Buscar preço via Finnhub (USD)'
+                    : 'Buscar preço via Yahoo Finance (USD) — sem token'
+                  : 'Buscar preço via BRAPI (BRL)'
+              }
             >
               ↻
             </Button>
@@ -157,11 +193,11 @@ function TableRow({ row, brapiToken }: { row: PosicaoEnriquecida; brapiToken?: s
 }
 
 interface AssetsTableProps {
-  brapiToken?: string;
+  tokens: ApiTokens;
   onAddPosicao: () => void;
 }
 
-export function AssetsTable({ brapiToken, onAddPosicao }: AssetsTableProps) {
+export function AssetsTable({ tokens, onAddPosicao }: AssetsTableProps) {
   const { carteira } = useCarteira();
   const [filtros, setFiltros] = useState<FiltrosTabela>({ classeId: null, corretoraId: null });
 
@@ -260,7 +296,7 @@ export function AssetsTable({ brapiToken, onAddPosicao }: AssetsTableProps) {
                 <TableRow
                   key={`${row.ativo.id}-${row.corretora.id}`}
                   row={row}
-                  brapiToken={brapiToken}
+                  tokens={tokens}
                 />
               ))
             )}

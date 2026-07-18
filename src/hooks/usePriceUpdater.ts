@@ -1,12 +1,18 @@
 import { useState, useCallback } from 'react';
-import { fetchQuote } from '../utils/priceService';
+import { fetchBrapiQuote, fetchFinnhubQuote, fetchYahooQuote } from '../utils/priceService';
 import { useCarteira } from '../context/CarteiraContext';
+import type { Mercado } from '../types/schema';
 
 export type PriceUpdateStatus = 'idle' | 'loading' | 'success' | 'error';
 
 interface PriceUpdaterState {
   statusMap: Record<string, PriceUpdateStatus>;
   errorMap: Record<string, string>;
+}
+
+export interface ApiTokens {
+  brapi?: string;
+  finnhub?: string;
 }
 
 export function usePriceUpdater() {
@@ -29,11 +35,32 @@ export function usePriceUpdater() {
   );
 
   const updatePrice = useCallback(
-    async (ativoId: string, ticker: string, token?: string) => {
+    async (
+      ativoId: string,
+      ticker: string,
+      mercado: Mercado = 'BR',
+      tokens: ApiTokens = {}
+    ) => {
       setStatus(ativoId, 'loading');
       try {
-        const quote = await fetchQuote(ticker, token);
-        updatePrecoCache(ativoId, quote.regularMarketPrice);
+        let price: number;
+
+        if (mercado === 'US') {
+          if (tokens.finnhub) {
+            // Finnhub preferido: confiável, com token
+            const quote = await fetchFinnhubQuote(ticker, tokens.finnhub);
+            price = quote.currentPrice;
+          } else {
+            // Yahoo Finance: gratuito, sem token — pode falhar por CORS
+            const quote = await fetchYahooQuote(ticker);
+            price = quote.currentPrice;
+          }
+        } else {
+          const quote = await fetchBrapiQuote(ticker, tokens.brapi);
+          price = quote.regularMarketPrice;
+        }
+
+        updatePrecoCache(ativoId, price);
         setStatus(ativoId, 'success');
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Falha ao buscar preço';

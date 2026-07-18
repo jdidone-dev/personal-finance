@@ -1,4 +1,4 @@
-import type { CarteiraSchema } from '../types/schema';
+import type { CarteiraSchema, ModoClasse } from '../types/schema';
 import { VERSAO_SCHEMA } from '../types/schema';
 
 export function createEmptyCarteira(): CarteiraSchema {
@@ -7,16 +7,57 @@ export function createEmptyCarteira(): CarteiraSchema {
     ultima_atualizacao: new Date().toISOString(),
     corretoras: [],
     classes_ativos: [
-      { id: 'c1', nome: 'Ações' },
-      { id: 'c2', nome: 'ETFs' },
-      { id: 'c3', nome: 'Renda Fixa' },
-      { id: 'c4', nome: 'FIIs' },
-      { id: 'c5', nome: 'Criptomoedas' },
-      { id: 'c6', nome: 'Fundos de Investimento' },
+      { id: 'c1', nome: 'Ações',                  modo: 'quantidade' },
+      { id: 'c2', nome: 'ETFs',                   modo: 'quantidade' },
+      { id: 'c3', nome: 'Renda Fixa',             modo: 'valor'      },
+      { id: 'c4', nome: 'FIIs',                   modo: 'valor'      },
+      { id: 'c5', nome: 'Criptomoedas',           modo: 'quantidade' },
+      { id: 'c6', nome: 'Fundos de Investimento', modo: 'valor'      },
     ],
     ativos: [],
     posicoes: [],
     historico_patrimonial: [],
+  };
+}
+
+// IDs das classes padrão que usam modo 'valor'
+const CLASSES_VALOR_IDS = new Set(['c3', 'c4', 'c6']);
+
+function inferModoPorNome(nome: string): ModoClasse {
+  const lower = nome.toLowerCase();
+  if (
+    lower.includes('renda fixa') ||
+    lower.includes('fii') ||
+    lower.includes('fundo') ||
+    lower.includes('cdb') ||
+    lower.includes('lca') ||
+    lower.includes('lci') ||
+    lower.includes('tesouro') ||
+    lower.includes('debenture') ||
+    lower.includes('debênture') ||
+    lower.includes('cri') ||
+    lower.includes('cra')
+  ) {
+    return 'valor';
+  }
+  return 'quantidade';
+}
+
+// Aplica defaults em JSONs criados antes do campo 'modo' existir
+function migrateCarteira(carteira: CarteiraSchema): CarteiraSchema {
+  const temClasseSemModo = carteira.classes_ativos.some((cl) => cl.modo === undefined);
+  if (!temClasseSemModo) return carteira;
+
+  return {
+    ...carteira,
+    classes_ativos: carteira.classes_ativos.map((cl) => {
+      if (cl.modo !== undefined) return cl;
+      // Prioridade: ID padrão → nome → 'quantidade'
+      const modo: ModoClasse = CLASSES_VALOR_IDS.has(cl.id)
+        ? 'valor'
+        : inferModoPorNome(cl.nome);
+      return { ...cl, modo };
+    }),
   };
 }
 
@@ -50,7 +91,7 @@ export function parseCarteiraFile(file: File): Promise<CarteiraSchema> {
           );
           return;
         }
-        resolve(data);
+        resolve(migrateCarteira(data));
       } catch {
         reject(new Error('Arquivo inválido: não foi possível parsear o JSON.'));
       }

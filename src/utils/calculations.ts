@@ -1,41 +1,45 @@
 import type { CarteiraSchema, PosicaoEnriquecida } from '../types/schema';
+import { getModoClasse } from '../types/schema';
 
 export function enrichPosicoes(carteira: CarteiraSchema): PosicaoEnriquecida[] {
   return carteira.posicoes.map((posicao) => {
     const ativo = carteira.ativos.find((a) => a.id === posicao.ativo_id)!;
     const corretora = carteira.corretoras.find((c) => c.id === posicao.corretora_id)!;
     const classeAtivo = carteira.classes_ativos.find((cl) => cl.id === ativo?.classe_id);
+    const isValorMode = getModoClasse(classeAtivo) === 'valor';
 
-    const valorTotal = posicao.quantidade * posicao.preco_atual_cache;
-    const custoTotal = posicao.quantidade * posicao.preco_medio;
-    const lucroAbsoluto = valorTotal - custoTotal;
-    const lucroPct = custoTotal !== 0 ? (lucroAbsoluto / custoTotal) * 100 : 0;
+    // Para modo 'valor': qty=1, preco_atual_cache = valor total da posição.
+    // Para modo 'quantidade': cálculo normal.
+    const valorTotal = isValorMode
+      ? posicao.preco_atual_cache
+      : posicao.quantidade * posicao.preco_atual_cache;
+    const custoTotal = isValorMode ? 0 : posicao.quantidade * posicao.preco_medio;
+    const lucroAbsoluto = isValorMode ? 0 : valorTotal - custoTotal;
+    const lucroPct = isValorMode || custoTotal === 0 ? 0 : (lucroAbsoluto / custoTotal) * 100;
 
-    return { posicao, ativo, corretora, classeAtivo, valorTotal, custoTotal, lucroAbsoluto, lucroPct };
+    return { posicao, ativo, corretora, classeAtivo, valorTotal, custoTotal, lucroAbsoluto, lucroPct, isValorMode };
   });
 }
 
 export function calcularPatrimonioTotal(carteira: CarteiraSchema): number {
-  return carteira.posicoes.reduce(
-    (acc, p) => acc + p.quantidade * p.preco_atual_cache,
-    0
-  );
+  return enrichPosicoes(carteira).reduce((acc, p) => acc + p.valorTotal, 0);
 }
 
 export function calcularCustoTotal(carteira: CarteiraSchema): number {
-  return carteira.posicoes.reduce(
-    (acc, p) => acc + p.quantidade * p.preco_medio,
-    0
-  );
+  // Exclui ativos de modo 'valor' — não há preço médio de entrada.
+  return enrichPosicoes(carteira)
+    .filter((p) => !p.isValorMode)
+    .reduce((acc, p) => acc + p.custoTotal, 0);
 }
 
 export function calcularLucroTotal(carteira: CarteiraSchema): {
   absoluto: number;
   percentual: number;
 } {
-  const custoTotal = calcularCustoTotal(carteira);
-  const patrimonioTotal = calcularPatrimonioTotal(carteira);
-  const absoluto = patrimonioTotal - custoTotal;
+  const posicoes = enrichPosicoes(carteira).filter((p) => !p.isValorMode);
+  const custoTotal = posicoes.reduce((acc, p) => acc + p.custoTotal, 0);
+  const valorAtual = posicoes.reduce((acc, p) => acc + p.valorTotal, 0);
+  const absoluto = valorAtual - custoTotal;
   const percentual = custoTotal !== 0 ? (absoluto / custoTotal) * 100 : 0;
   return { absoluto, percentual };
 }
@@ -106,6 +110,14 @@ export function getCurrentAnoMes(): string {
 
 export function formatCurrency(value: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+}
+
+export function formatUSD(value: number): string {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
+}
+
+export function formatCurrencyByMercado(value: number, mercado?: string): string {
+  return mercado === 'US' ? formatUSD(value) : formatCurrency(value);
 }
 
 export function formatPercent(value: number, decimals = 2): string {

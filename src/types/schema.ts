@@ -1,13 +1,17 @@
 export type TipoAtualizacao = 'automatica' | 'manual';
+export type Mercado = 'BR' | 'US';
 
 export interface Corretora {
   id: string;
   nome: string;
 }
 
+export type ModoClasse = 'quantidade' | 'valor';
+
 export interface ClasseAtivo {
   id: string;
   nome: string;
+  modo?: ModoClasse; // ausente = 'quantidade' (compatibilidade com JSONs antigos)
 }
 
 export interface Ativo {
@@ -16,6 +20,7 @@ export interface Ativo {
   nome: string;
   classe_id: string;
   atualizacao: TipoAtualizacao;
+  mercado?: Mercado; // ausente = 'BR' (retrocompatibilidade)
 }
 
 export interface Posicao {
@@ -53,6 +58,11 @@ export interface PosicaoEnriquecida {
   custoTotal: number;
   lucroAbsoluto: number;
   lucroPct: number;
+  isValorMode: boolean;
+}
+
+export function getModoClasse(classe?: ClasseAtivo): ModoClasse {
+  return classe?.modo ?? 'quantidade';
 }
 
 export interface FiltrosTabela {
