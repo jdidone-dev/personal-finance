@@ -2,7 +2,7 @@ import React, { createContext, useContext, useReducer, useCallback } from 'react
 import { v4 as uuidv4 } from 'uuid';
 import type { CarteiraSchema, Corretora, ClasseAtivo, Ativo, Posicao } from '../types/schema';
 import { createEmptyCarteira, exportCarteiraAsJSON } from '../utils/fileHandler';
-import { getCurrentAnoMes, calcularPatrimonioPorCorretora } from '../utils/calculations';
+import { getCurrentAnoMes, getCurrentData, enrichPosicoes } from '../utils/calculations';
 
 interface CarteiraState {
   carteira: CarteiraSchema | null;
@@ -17,7 +17,8 @@ type CarteiraAction =
   | { type: 'UPSERT_POSICAO'; payload: Posicao }
   | { type: 'UPDATE_POSICAO'; payload: { ativo_id: string; corretora_id: string; updates: Partial<Posicao> } }
   | { type: 'UPDATE_PRECO_CACHE'; payload: { ativo_id: string; preco: number } }
-  | { type: 'CONSOLIDAR_MES' }
+  | { type: 'CONSOLIDAR_MES'; payload: { usdBrlRate: number } }
+  | { type: 'CONSOLIDAR_DIA'; payload: { usdBrlRate: number } }
   | { type: 'REMOVE_POSICAO'; payload: { ativo_id: string; corretora_id: string } }
   | { type: 'REMOVE_ATIVO'; payload: string }
   | { type: 'REMOVE_CORRETORA'; payload: string };
@@ -104,7 +105,15 @@ function reducer(state: CarteiraState, action: CarteiraAction): CarteiraState {
     case 'CONSOLIDAR_MES': {
       if (!c) return state;
       const anoMes = getCurrentAnoMes();
-      const porCorretora = calcularPatrimonioPorCorretora(c);
+      const { usdBrlRate } = action.payload;
+
+      // Agrega por corretora convertendo posições USD para BRL pela cotação do dia.
+      const porCorretora: Record<string, number> = {};
+      enrichPosicoes(c).forEach((p) => {
+        const id = p.posicao.corretora_id;
+        const valor = p.ativo.mercado === 'US' ? p.valorTotal * usdBrlRate : p.valorTotal;
+        porCorretora[id] = (porCorretora[id] ?? 0) + valor;
+      });
 
       const novasEntradas = Object.entries(porCorretora).map(
         ([corretora_id, valor_total]) => ({ ano_mes: anoMes, corretora_id, valor_total })
@@ -117,6 +126,35 @@ function reducer(state: CarteiraState, action: CarteiraAction): CarteiraState {
           ...c,
           historico_patrimonial: [...historicoPrevio, ...novasEntradas].sort((a, b) =>
             a.ano_mes.localeCompare(b.ano_mes)
+          ),
+        },
+      };
+    }
+
+    case 'CONSOLIDAR_DIA': {
+      if (!c) return state;
+      const data = getCurrentData();
+      const { usdBrlRate } = action.payload;
+
+      const porCorretora: Record<string, number> = {};
+      enrichPosicoes(c).forEach((p) => {
+        const id = p.posicao.corretora_id;
+        const valor = p.ativo.mercado === 'US' ? p.valorTotal * usdBrlRate : p.valorTotal;
+        porCorretora[id] = (porCorretora[id] ?? 0) + valor;
+      });
+
+      const novasEntradas = Object.entries(porCorretora).map(
+        ([corretora_id, valor_total]) => ({ data, corretora_id, valor_total })
+      );
+
+      // Substitui entradas do mesmo dia (idempotente)
+      const historicoPrevio = c.historico_diario.filter((h) => h.data !== data);
+
+      return {
+        carteira: {
+          ...c,
+          historico_diario: [...historicoPrevio, ...novasEntradas].sort((a, b) =>
+            a.data.localeCompare(b.data)
           ),
         },
       };
@@ -171,7 +209,8 @@ interface CarteiraContextType {
   upsertPosicao: (posicao: Posicao) => void;
   updatePosicao: (ativo_id: string, corretora_id: string, updates: Partial<Posicao>) => void;
   updatePrecoCache: (ativo_id: string, preco: number) => void;
-  consolidarMes: () => void;
+  consolidarMes: (usdBrlRate: number) => void;
+  consolidarDia: (usdBrlRate: number) => void;
   removePosicao: (ativo_id: string, corretora_id: string) => void;
   removeAtivo: (ativo_id: string) => void;
   removeCorretora: (corretora_id: string) => void;
@@ -221,8 +260,12 @@ export function CarteiraProvider({ children }: { children: React.ReactNode }) {
     dispatch({ type: 'UPDATE_PRECO_CACHE', payload: { ativo_id, preco } });
   }, []);
 
-  const consolidarMes = useCallback(() => {
-    dispatch({ type: 'CONSOLIDAR_MES' });
+  const consolidarMes = useCallback((usdBrlRate: number) => {
+    dispatch({ type: 'CONSOLIDAR_MES', payload: { usdBrlRate } });
+  }, []);
+
+  const consolidarDia = useCallback((usdBrlRate: number) => {
+    dispatch({ type: 'CONSOLIDAR_DIA', payload: { usdBrlRate } });
   }, []);
 
   const removePosicao = useCallback((ativo_id: string, corretora_id: string) => {
@@ -251,6 +294,7 @@ export function CarteiraProvider({ children }: { children: React.ReactNode }) {
         updatePosicao,
         updatePrecoCache,
         consolidarMes,
+        consolidarDia,
         removePosicao,
         removeAtivo,
         removeCorretora,

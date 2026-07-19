@@ -21,8 +21,58 @@ export function enrichPosicoes(carteira: CarteiraSchema): PosicaoEnriquecida[] {
   });
 }
 
+// Soma bruta sem conversão de moeda — usar apenas internamente ou onde se aceita a mistura.
 export function calcularPatrimonioTotal(carteira: CarteiraSchema): number {
   return enrichPosicoes(carteira).reduce((acc, p) => acc + p.valorTotal, 0);
+}
+
+// Soma em BRL, convertendo posições USD pela cotação do dia.
+export function calcularPatrimonioBRL(
+  carteira: CarteiraSchema,
+  usdBrlRate: number
+): number {
+  return enrichPosicoes(carteira).reduce((acc, p) => {
+    const valor = p.ativo.mercado === 'US' ? p.valorTotal * usdBrlRate : p.valorTotal;
+    return acc + valor;
+  }, 0);
+}
+
+export interface ResumoCorretora {
+  corretoraId: string;
+  valorUSD: number;     // soma de posições US em dólar
+  valorBRL: number;     // soma de posições BR em real
+  totalBRL: number;     // valorBRL + (valorUSD * usdBrlRate)
+  hasUSAssets: boolean;
+}
+
+export function calcularResumoCorretoras(
+  carteira: CarteiraSchema,
+  usdBrlRate: number
+): Map<string, ResumoCorretora> {
+  const map = new Map<string, ResumoCorretora>();
+
+  enrichPosicoes(carteira).forEach((p) => {
+    const id = p.posicao.corretora_id;
+    const entry: ResumoCorretora = map.get(id) ?? {
+      corretoraId: id,
+      valorUSD: 0,
+      valorBRL: 0,
+      totalBRL: 0,
+      hasUSAssets: false,
+    };
+
+    if (p.ativo.mercado === 'US') {
+      entry.valorUSD += p.valorTotal;
+      entry.hasUSAssets = true;
+    } else {
+      entry.valorBRL += p.valorTotal;
+    }
+
+    entry.totalBRL = entry.valorBRL + entry.valorUSD * usdBrlRate;
+    map.set(id, entry);
+  });
+
+  return map;
 }
 
 export function calcularCustoTotal(carteira: CarteiraSchema): number {
@@ -36,7 +86,10 @@ export function calcularLucroTotal(carteira: CarteiraSchema): {
   absoluto: number;
   percentual: number;
 } {
-  const posicoes = enrichPosicoes(carteira).filter((p) => !p.isValorMode);
+  // Considera apenas posições BR em modo quantidade (há preço de custo em BRL).
+  const posicoes = enrichPosicoes(carteira).filter(
+    (p) => !p.isValorMode && p.ativo.mercado !== 'US'
+  );
   const custoTotal = posicoes.reduce((acc, p) => acc + p.custoTotal, 0);
   const valorAtual = posicoes.reduce((acc, p) => acc + p.valorTotal, 0);
   const absoluto = valorAtual - custoTotal;
@@ -45,17 +98,18 @@ export function calcularLucroTotal(carteira: CarteiraSchema): {
 }
 
 export function calcularAlocacaoPorClasse(
-  carteira: CarteiraSchema
+  carteira: CarteiraSchema,
+  usdBrlRate = 1
 ): Array<{ id: string; nome: string; valor: number; percentual: number }> {
-  const patrimonioTotal = calcularPatrimonioTotal(carteira);
+  const enriched = enrichPosicoes(carteira);
   const porClasse = new Map<string, number>();
 
-  carteira.posicoes.forEach((posicao) => {
-    const ativo = carteira.ativos.find((a) => a.id === posicao.ativo_id);
-    if (!ativo) return;
-    const valorAtual = posicao.quantidade * posicao.preco_atual_cache;
-    porClasse.set(ativo.classe_id, (porClasse.get(ativo.classe_id) ?? 0) + valorAtual);
+  enriched.forEach((p) => {
+    const valor = p.ativo.mercado === 'US' ? p.valorTotal * usdBrlRate : p.valorTotal;
+    porClasse.set(p.ativo.classe_id, (porClasse.get(p.ativo.classe_id) ?? 0) + valor);
   });
+
+  const patrimonioTotal = Array.from(porClasse.values()).reduce((a, b) => a + b, 0);
 
   return carteira.classes_ativos
     .filter((cl) => porClasse.has(cl.id))
@@ -70,6 +124,7 @@ export function calcularAlocacaoPorClasse(
     }));
 }
 
+// Mantido para compatibilidade; retorna valores brutos (sem conversão de moeda).
 export function calcularPatrimonioPorCorretora(
   carteira: CarteiraSchema
 ): Record<string, number> {
@@ -106,6 +161,36 @@ export function getHistoricoCorretora(
 export function getCurrentAnoMes(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+export function getCurrentData(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+export function getHistoricoGeralDiario(
+  carteira: CarteiraSchema
+): Array<{ mes: string; valor: number }> {
+  const porData = new Map<string, number>();
+  carteira.historico_diario.forEach((h) => {
+    porData.set(h.data, (porData.get(h.data) ?? 0) + h.valor_total);
+  });
+  return Array.from(porData.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([mes, valor]) => ({ mes, valor }));
+}
+
+export function getHistoricoCorretoraDiario(
+  carteira: CarteiraSchema,
+  corretoraId: string
+): Array<{ mes: string; valor: number }> {
+  return carteira.historico_diario
+    .filter((h) => h.corretora_id === corretoraId)
+    .sort((a, b) => a.data.localeCompare(b.data))
+    .map((h) => ({ mes: h.data, valor: h.valor_total }));
 }
 
 export function formatCurrency(value: number): string {

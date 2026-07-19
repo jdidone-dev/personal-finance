@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useCarteira } from '../../context/CarteiraContext';
-import { getHistoricoGeral, getCurrentAnoMes, calcularPatrimonioTotal, formatCurrency } from '../../utils/calculations';
+import { getHistoricoGeral, getCurrentAnoMes, getCurrentData, calcularPatrimonioBRL, calcularPatrimonioTotal, formatCurrency } from '../../utils/calculations';
+import { useExchangeRate } from '../../hooks/useExchangeRate';
 import { KPICards } from './KPICards';
 import { PatrimonyChart } from './PatrimonyChart';
 import { CorretoraView } from './CorretoraView';
@@ -13,7 +14,7 @@ import { Button } from '../UI/Button';
 import { Card } from '../UI/Card';
 import type { ApiTokens } from '../../hooks/usePriceUpdater';
 
-type ActiveModal = 'corretora' | 'ativo' | 'posicao' | 'consolidar' | null;
+type ActiveModal = 'corretora' | 'ativo' | 'posicao' | 'consolidar' | 'snapshot' | null;
 
 function ApiSettings({
   tokens,
@@ -89,25 +90,34 @@ function ApiSettings({
 }
 
 export function Dashboard() {
-  const { carteira, exportCarteira, consolidarMes } = useCarteira();
+  const { carteira, exportCarteira, consolidarMes, consolidarDia } = useCarteira();
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
   const [tokens, setTokens] = useState<ApiTokens>({
     finnhub: import.meta.env.VITE_FINNHUB_TOKEN || undefined,
     brapi: import.meta.env.VITE_BRAPI_TOKEN || undefined,
   });
 
+  const { rate: usdBrlRate, loading: rateLoading, error: rateError, refetch: refetchRate } =
+    useExchangeRate();
+
   if (!carteira) return null;
 
+  const hasUSAtivos = carteira.ativos.some((a) => a.mercado === 'US');
   const historicoGeral = getHistoricoGeral(carteira);
-  const patrimonioTotal = calcularPatrimonioTotal(carteira);
-  const anoMesAtual = getCurrentAnoMes();
 
-  const hasUSAtivos = carteira.ativos.some(
-    (a) => a.mercado === 'US' && a.atualizacao === 'automatica'
-  );
+  // Patrimônio no header: usa BRL convertido quando há ativos US.
+  const patrimonioHeader =
+    hasUSAtivos && usdBrlRate !== null
+      ? calcularPatrimonioBRL(carteira, usdBrlRate)
+      : calcularPatrimonioTotal(carteira);
 
   function handleConsolidar() {
-    consolidarMes();
+    consolidarMes(usdBrlRate ?? 1);
+    setActiveModal(null);
+  }
+
+  function handleSnapshot() {
+    consolidarDia(usdBrlRate ?? 1);
     setActiveModal(null);
   }
 
@@ -127,8 +137,28 @@ export function Dashboard() {
               Gestão de Investimentos
             </span>
             <span className="mono text-xs text-slate-500 hidden md:inline">
-              {formatCurrency(patrimonioTotal)}
+              {rateLoading && hasUSAtivos ? '…' : formatCurrency(patrimonioHeader)}
             </span>
+            {/* Indicador de câmbio */}
+            {hasUSAtivos && (
+              <span className="hidden md:flex items-center gap-1 text-xs text-slate-600">
+                {rateLoading ? (
+                  <span>Buscando USD/BRL…</span>
+                ) : rateError ? (
+                  <button
+                    onClick={refetchRate}
+                    className="text-rose-500 hover:text-rose-400 flex items-center gap-1"
+                    title={rateError}
+                  >
+                    ⚠ USD/BRL indisponível — tentar novamente
+                  </button>
+                ) : usdBrlRate !== null ? (
+                  <span className="text-slate-600">
+                    🇺🇸 USD 1 = <span className="mono">{formatCurrency(usdBrlRate)}</span>
+                  </span>
+                ) : null}
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -139,9 +169,13 @@ export function Dashboard() {
             <Button size="sm" variant="ghost" onClick={() => setActiveModal('ativo')}>
               + Ativo
             </Button>
+            <Button size="sm" variant="ghost" onClick={() => setActiveModal('snapshot')}
+              title={`Gravar snapshot de hoje (${getCurrentData()}) no histórico diário`}>
+              📸 {getCurrentData()}
+            </Button>
             <Button size="sm" variant="secondary" onClick={() => setActiveModal('consolidar')}
-              title={`Congelar snapshot de ${anoMesAtual} no histórico`}>
-              Consolidar {anoMesAtual}
+              title={`Congelar snapshot de ${getCurrentAnoMes()} no histórico mensal`}>
+              Consolidar {getCurrentAnoMes()}
             </Button>
             <Button size="sm" variant="primary" onClick={exportCarteira}>
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -168,14 +202,18 @@ export function Dashboard() {
       {/* Main content */}
       <main className="max-w-screen-xl mx-auto px-4 sm:px-6 py-6 space-y-6">
         <section className="space-y-4">
-          <KPICards />
+          <KPICards
+            usdBrlRate={usdBrlRate}
+            rateLoading={rateLoading}
+            rateError={rateError}
+          />
           <Card title="Evolução Patrimonial Geral">
             <PatrimonyChart data={historicoGeral} title="" />
           </Card>
         </section>
 
         <section>
-          <CorretoraView />
+          <CorretoraView usdBrlRate={usdBrlRate} rateLoading={rateLoading} />
         </section>
 
         <section>
@@ -187,11 +225,28 @@ export function Dashboard() {
       <AddAtivoModal open={activeModal === 'ativo'} onClose={() => setActiveModal(null)} />
       <AddPosicaoModal open={activeModal === 'posicao'} onClose={() => setActiveModal(null)} />
       <ConfirmModal
+        open={activeModal === 'snapshot'}
+        onClose={() => setActiveModal(null)}
+        onConfirm={handleSnapshot}
+        title={`Snapshot Diário — ${getCurrentData()}`}
+        message={
+          hasUSAtivos && !usdBrlRate
+            ? `Cotação USD/BRL indisponível — valores US serão gravados sem conversão. Continuar?`
+            : `Grava (ou substitui) o snapshot de hoje (${getCurrentData()}) no histórico diário${hasUSAtivos && usdBrlRate ? ` (USD a ${formatCurrency(usdBrlRate)})` : ''}. Operação idempotente — pode ser repetida no mesmo dia. Continuar?`
+        }
+        confirmLabel="Gravar snapshot"
+        variant="primary"
+      />
+      <ConfirmModal
         open={activeModal === 'consolidar'}
         onClose={() => setActiveModal(null)}
         onConfirm={handleConsolidar}
         title="Consolidar Mês Atual"
-        message={`Isso vai gravar (ou sobrescrever) o snapshot de ${anoMesAtual} no histórico patrimonial com os valores atuais. Esta operação é idempotente — pode ser repetida quantas vezes necessário dentro do mesmo mês. Continuar?`}
+        message={
+          hasUSAtivos && !usdBrlRate
+            ? `Cotação USD/BRL indisponível — os valores US serão gravados sem conversão. Continuar assim mesmo?`
+            : `Grava (ou sobrescreve) o snapshot de ${getCurrentAnoMes()} no histórico mensal${hasUSAtivos && usdBrlRate ? ` (USD a ${formatCurrency(usdBrlRate)})` : ''}. Operação idempotente. Continuar?`
+        }
         confirmLabel="Consolidar"
         variant="primary"
       />

@@ -1,13 +1,21 @@
-import React from 'react';
+import type { ReactNode } from 'react';
 import {
+  calcularPatrimonioBRL,
   calcularPatrimonioTotal,
   calcularLucroTotal,
   calcularAlocacaoPorClasse,
   formatCurrency,
+  formatUSD,
   formatPercent,
 } from '../../utils/calculations';
 import { useCarteira } from '../../context/CarteiraContext';
 import { Badge } from '../UI/Badge';
+
+interface KPICardsProps {
+  usdBrlRate: number | null;
+  rateLoading: boolean;
+  rateError: string | null;
+}
 
 function KPICard({
   label,
@@ -17,7 +25,7 @@ function KPICard({
 }: {
   label: string;
   value: string;
-  sub?: React.ReactNode;
+  sub?: ReactNode;
   positive?: boolean;
 }) {
   return (
@@ -39,31 +47,63 @@ function KPICard({
   );
 }
 
-export function KPICards() {
+export function KPICards({ usdBrlRate, rateLoading, rateError }: KPICardsProps) {
   const { carteira } = useCarteira();
   if (!carteira) return null;
 
-  const patrimonio = calcularPatrimonioTotal(carteira);
+  const hasUSAssets = carteira.ativos.some((a) => a.mercado === 'US');
+
+  // Usa conversão BRL quando há ativos US e a taxa está disponível.
+  const patrimonio =
+    hasUSAssets && usdBrlRate !== null
+      ? calcularPatrimonioBRL(carteira, usdBrlRate)
+      : calcularPatrimonioTotal(carteira);
+
   const { absoluto, percentual } = calcularLucroTotal(carteira);
-  const alocacao = calcularAlocacaoPorClasse(carteira);
+  const alocacao = calcularAlocacaoPorClasse(carteira, usdBrlRate ?? 1);
   const isPositive = absoluto >= 0;
+  const ultimaAtualizacao = new Date(carteira.ultima_atualizacao).toLocaleDateString('pt-BR');
+
+  function patrimonioSub() {
+    if (hasUSAssets) {
+      if (rateLoading) return 'Buscando cotação USD/BRL…';
+      if (rateError) return `Cotação indisponível — valores USD não convertidos`;
+      return (
+        <>
+          USD 1 ={' '}
+          <span className="mono text-slate-400">
+            {formatCurrency(usdBrlRate!)}
+          </span>{' '}
+          • posições US convertidas
+        </>
+      );
+    }
+    return `Última atualização: ${ultimaAtualizacao}`;
+  }
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
       <KPICard
-        label="Patrimônio Total"
-        value={formatCurrency(patrimonio)}
-        sub={`Última atualização: ${new Date(carteira.ultima_atualizacao).toLocaleDateString('pt-BR')}`}
+        label="Patrimônio Total (BRL)"
+        value={rateLoading && hasUSAssets ? '…' : formatCurrency(patrimonio)}
+        sub={patrimonioSub()}
       />
 
       <KPICard
-        label="Lucro / Prejuízo"
+        label="Lucro / Prejuízo (BR)"
         value={formatCurrency(absoluto)}
         positive={isPositive}
         sub={
-          <span className={isPositive ? 'positive' : 'negative'}>
-            {formatPercent(percentual)} sobre custo total
-          </span>
+          <>
+            <span className={isPositive ? 'positive' : 'negative'}>
+              {formatPercent(percentual)} sobre custo total
+            </span>
+            {hasUSAssets && (
+              <span className="block text-slate-600 mt-0.5">
+                Ativos US e modo valor excluídos do L/P
+              </span>
+            )}
+          </>
         }
       />
 
@@ -94,6 +134,12 @@ export function KPICards() {
               </div>
             ))}
           </div>
+        )}
+        {hasUSAssets && usdBrlRate !== null && (
+          <p className="text-xs text-slate-700 pt-1">
+            Posições US convertidas a{' '}
+            <span className="mono">{formatUSD(1)} = {formatCurrency(usdBrlRate)}</span>
+          </p>
         )}
       </div>
     </div>

@@ -17,6 +17,7 @@ export function createEmptyCarteira(): CarteiraSchema {
     ativos: [],
     posicoes: [],
     historico_patrimonial: [],
+    historico_diario: [],
   };
 }
 
@@ -43,22 +44,31 @@ function inferModoPorNome(nome: string): ModoClasse {
   return 'quantidade';
 }
 
-// Aplica defaults em JSONs criados antes do campo 'modo' existir
+// Aplica defaults em JSONs criados antes de campos novos existirem
 function migrateCarteira(carteira: CarteiraSchema): CarteiraSchema {
-  const temClasseSemModo = carteira.classes_ativos.some((cl) => cl.modo === undefined);
-  if (!temClasseSemModo) return carteira;
+  let c = carteira;
 
-  return {
-    ...carteira,
-    classes_ativos: carteira.classes_ativos.map((cl) => {
-      if (cl.modo !== undefined) return cl;
-      // Prioridade: ID padrão → nome → 'quantidade'
-      const modo: ModoClasse = CLASSES_VALOR_IDS.has(cl.id)
-        ? 'valor'
-        : inferModoPorNome(cl.nome);
-      return { ...cl, modo };
-    }),
-  };
+  // v1.0 → v1.1: adiciona campo 'modo' nas classes e array 'historico_diario'
+  const temClasseSemModo = c.classes_ativos.some((cl) => cl.modo === undefined);
+  if (temClasseSemModo) {
+    c = {
+      ...c,
+      classes_ativos: c.classes_ativos.map((cl) => {
+        if (cl.modo !== undefined) return cl;
+        const modo: ModoClasse = CLASSES_VALOR_IDS.has(cl.id)
+          ? 'valor'
+          : inferModoPorNome(cl.nome);
+        return { ...cl, modo };
+      }),
+    };
+  }
+
+  // Garante que historico_diario existe (JSONs anteriores à v1.1 não têm)
+  if (!Array.isArray((c as unknown as Record<string, unknown>).historico_diario)) {
+    c = { ...c, historico_diario: [] };
+  }
+
+  return c;
 }
 
 export function validateCarteiraSchema(data: unknown): data is CarteiraSchema {

@@ -32,12 +32,18 @@ export interface Posicao {
 }
 
 export interface HistoricoPatrimonial {
-  ano_mes: string;
+  ano_mes: string;       // "YYYY-MM"
   corretora_id: string;
   valor_total: number;
 }
 
-export const VERSAO_SCHEMA = '1.0' as const;
+export interface HistoricoDiario {
+  data: string;          // "YYYY-MM-DD"
+  corretora_id: string;
+  valor_total: number;
+}
+
+export const VERSAO_SCHEMA = '1.1' as const;
 
 export interface CarteiraSchema {
   versao_schema: string;
@@ -47,6 +53,7 @@ export interface CarteiraSchema {
   ativos: Ativo[];
   posicoes: Posicao[];
   historico_patrimonial: HistoricoPatrimonial[];
+  historico_diario: HistoricoDiario[];
 }
 
 export interface PosicaoEnriquecida {

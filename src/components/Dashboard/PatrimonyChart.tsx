@@ -7,7 +7,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { formatCurrency } from '../../utils/calculations';
+import { formatCurrency, formatUSD } from '../../utils/calculations';
 
 interface DataPoint {
   mes: string;
@@ -22,17 +22,20 @@ function CustomTooltip({
   active,
   payload,
   label,
+  currency,
 }: {
   active?: boolean;
   payload?: TooltipPayload[];
   label?: string;
+  currency: 'BRL' | 'USD';
 }) {
   if (!active || !payload?.length) return null;
+  const fmt = currency === 'USD' ? formatUSD : formatCurrency;
   return (
     <div className="bg-surface-1 border border-slate-700 rounded-lg px-3 py-2 shadow-xl">
       <p className="text-xs text-slate-400 mb-1">{label}</p>
       <p className="mono text-sm font-semibold text-sky-300">
-        {formatCurrency(payload[0].value)}
+        {fmt(payload[0].value)}
       </p>
     </div>
   );
@@ -42,12 +45,14 @@ interface PatrimonyChartProps {
   data: DataPoint[];
   title?: string;
   color?: string;
+  currency?: 'BRL' | 'USD';
 }
 
 export function PatrimonyChart({
   data,
   title = 'Evolução Patrimonial',
   color = '#38bdf8',
+  currency = 'BRL',
 }: PatrimonyChartProps) {
   if (data.length === 0) {
     return (
@@ -81,19 +86,26 @@ export function PatrimonyChart({
           />
           <YAxis
             tickFormatter={(v: number) =>
-              new Intl.NumberFormat('pt-BR', {
-                notation: 'compact',
-                compactDisplay: 'short',
-                currency: 'BRL',
-                style: 'currency',
-              }).format(v)
+              currency === 'USD'
+                ? new Intl.NumberFormat('en-US', {
+                    notation: 'compact',
+                    compactDisplay: 'short',
+                    currency: 'USD',
+                    style: 'currency',
+                  }).format(v)
+                : new Intl.NumberFormat('pt-BR', {
+                    notation: 'compact',
+                    compactDisplay: 'short',
+                    currency: 'BRL',
+                    style: 'currency',
+                  }).format(v)
             }
             tick={{ fill: '#64748b', fontSize: 11 }}
             axisLine={false}
             tickLine={false}
             width={80}
           />
-          <Tooltip content={<CustomTooltip />} />
+          <Tooltip content={<CustomTooltip currency={currency} />} />
           <Line
             type="monotone"
             dataKey="valor"
